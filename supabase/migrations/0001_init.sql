@@ -10,7 +10,7 @@ create table if not exists questions (
   topic text,
   difficulty text check (difficulty in ('easy', 'medium', 'hard')),
   source text,
-  type text check (type in ('past_paper', 'generated')),
+  type text check (type in ('past_paper', 'book', 'generated')),
   set_id uuid,
   set_text text,
   set_image_url text,

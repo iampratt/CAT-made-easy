@@ -62,6 +62,7 @@ pnpm dev
 5. Apply SQL migration in Supabase SQL editor:
 
 - Run contents of `supabase/migrations/0001_init.sql`
+- Run contents of `supabase/migrations/0002_allow_book_type.sql` (if DB was already initialized earlier)
 - Create a public storage bucket named `dilr-images`
 
 ## Scripts
@@ -74,12 +75,14 @@ pnpm review:pdf --file ./books/cat-2022.pdf --pages 20
 pnpm ingest:pdf --file ./books/cat-2022.pdf --section auto --source-type past_paper
 pnpm ingest:pdf --file ./books/arun-sharma-quant.pdf --section quant --source-type book
 pnpm ingest:dir ./books --section auto --source-type past_paper
+pnpm ingest:pdf --file ./books/cat-2022.pdf --dry-run --limit-pages 20
 ```
 
 Notes:
 - Use `--section auto` to infer section from filename (`varc`, `dilr/lrdi`, else `quant`).
 - Use `--source-type past_paper` for PYQs and `--source-type book` for Arun Sharma or other prep books.
 - Use `--dry-run` to test parsing without DB inserts.
+- For lowest ingestion cost: keep tagging on (8b), keep embeddings local, and use `--limit-pages` for trial runs before full ingestion.
 
 ## Deployment (Vercel)
 

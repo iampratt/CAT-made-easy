@@ -11,7 +11,7 @@ export interface Question {
   topic: string;
   difficulty: Difficulty;
   source?: string;
-  type: 'past_paper' | 'generated';
+  type: 'past_paper' | 'book' | 'generated';
   setId?: string | null;
   setText?: string | null;
   setImageUrl?: string | null;

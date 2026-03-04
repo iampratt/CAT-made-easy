@@ -5,50 +5,29 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { getCheckpoint, upsertCheckpoint } from './checkpointer';
+import { embedBatch } from './embedder';
 import { parsePdfPages } from './pdfParser';
 import { splitQuantVarcQuestions } from './questionSplitter';
+import { tagInBatches, type IngestSourceType } from './tagger';
 
 type Section = 'quant' | 'dilr' | 'varc';
-type SourceType = 'past_paper' | 'book';
 
 interface IngestOptions {
   file?: string;
   dir?: string;
   section: Section | 'auto';
-  sourceType: SourceType;
+  sourceType: IngestSourceType;
   sourceLabel?: string;
   dryRun: boolean;
   limitPages?: number;
+  skipTagging: boolean;
+  skipEmbedding: boolean;
 }
 
-function inferSection(filePath: string): Section {
-  const lower = filePath.toLowerCase();
-  if (lower.includes('varc') || lower.includes('verbal') || lower.includes('reading')) return 'varc';
-  if (lower.includes('dilr') || lower.includes('lrdi') || lower.includes('logical')) return 'dilr';
-  return 'quant';
-}
-
-function inferSectionFromQuestion(text: string, options: string[]): Section {
-  const content = `${text} ${options.join(' ')}`.toLowerCase();
-
-  if (
-    /passage|author|inference|paragraph|implied|argument|statement/.test(content) ||
-    text.length > 180
-  ) {
-    return 'varc';
-  }
-
-  if (
-    /table|bar chart|line chart|pie chart|arrangement|scheduling|seating|set of people|distribution/.test(content)
-  ) {
-    return 'dilr';
-  }
-
-  if (/\d|%|ratio|profit|loss|distance|speed|time|work|mixture|equation|integer/.test(content)) {
-    return 'quant';
-  }
-
-  return 'quant';
+interface CandidateQuestion {
+  text: string;
+  options: string[];
+  textHash: string;
 }
 
 async function listPdfFiles(rootDir: string): Promise<string[]> {
@@ -64,9 +43,7 @@ async function listPdfFiles(rootDir: string): Promise<string[]> {
       const fullPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
         queue.push(fullPath);
-        continue;
-      }
-      if (entry.isFile() && entry.name.toLowerCase().endsWith('.pdf')) {
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.pdf')) {
         files.push(fullPath);
       }
     }
@@ -75,87 +52,144 @@ async function listPdfFiles(rootDir: string): Promise<string[]> {
   return files.sort();
 }
 
-function dedupeByTextHash<T extends { text: string }>(items: T[]) {
+function dedupeByHash(items: Array<{ text: string; options: string[] }>): CandidateQuestion[] {
   const seen = new Set<string>();
-  const out: Array<T & { textHash: string }> = [];
+  const out: CandidateQuestion[] = [];
 
   for (const item of items) {
-    const textHash = createHash('md5').update(item.text).digest('hex');
+    const text = item.text.trim();
+    if (text.length < 20) continue;
+
+    const textHash = createHash('md5').update(text).digest('hex');
     if (seen.has(textHash)) continue;
     seen.add(textHash);
-    out.push({ ...item, textHash });
+
+    out.push({
+      text,
+      options: item.options,
+      textHash,
+    });
   }
 
   return out;
+}
+
+async function embedInBatches(texts: string[], batchSize = 32): Promise<number[][]> {
+  const vectors: number[][] = [];
+  for (let i = 0; i < texts.length; i += batchSize) {
+    const batch = texts.slice(i, i + batchSize);
+    const output = await embedBatch(batch);
+    vectors.push(...output);
+  }
+  return vectors;
 }
 
 async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' | 'dir'>) {
   const supabase = createAdminSupabase();
   const checkpoint = await getCheckpoint(filePath);
   const startPage = Number(checkpoint?.last_processed_page ?? 0);
-  const defaultSection = opts.section === 'auto' ? inferSection(filePath) : opts.section;
   const source = opts.sourceLabel?.trim() || path.basename(filePath, path.extname(filePath));
 
   const pages = await parsePdfPages(filePath);
-  const limitedPages = typeof opts.limitPages === 'number' ? pages.slice(0, opts.limitPages) : pages;
+  const effectivePages = typeof opts.limitPages === 'number' ? pages.slice(0, opts.limitPages) : pages;
 
   await upsertCheckpoint(filePath, {
     status: 'running',
-    total_pages: limitedPages.length,
+    total_pages: effectivePages.length,
   });
 
   let inserted = Number(checkpoint?.questions_ingested ?? 0);
+  let sinceLastCheckpoint = 0;
 
-  for (let index = startPage; index < limitedPages.length; index += 1) {
-    const page = limitedPages[index];
-    const chunks = dedupeByTextHash(splitQuantVarcQuestions(page.text));
+  for (let index = startPage; index < effectivePages.length; index += 1) {
+    const page = effectivePages[index];
+    if (!page.text && page.hasImage) {
+      await upsertCheckpoint(filePath, {
+        status: 'running',
+        last_processed_page: index + 1,
+        questions_ingested: inserted,
+      });
+      continue;
+    }
 
-    for (const chunk of chunks) {
+    const parsed = splitQuantVarcQuestions(page.text);
+    const candidates = dedupeByHash(parsed);
+
+    const toInsert: CandidateQuestion[] = [];
+    for (const candidate of candidates) {
       if (opts.dryRun) {
-        inserted += 1;
+        toInsert.push(candidate);
         continue;
       }
 
       const { data: existing, error: existingError } = await supabase
         .from('questions')
         .select('id')
-        .eq('text_hash', chunk.textHash)
+        .eq('text_hash', candidate.textHash)
         .maybeSingle();
       if (existingError) throw existingError;
-      if (existing) continue;
-
-      const { error } = await supabase.from('questions').insert({
-        text: chunk.text,
-        options: chunk.options,
-        correct_answer: null,
-        explanation: null,
-        section: opts.section === 'auto' ? inferSectionFromQuestion(chunk.text, chunk.options) : defaultSection,
-        topic: 'unclassified',
-        difficulty: 'medium',
-        source,
-        type: opts.sourceType,
-        text_hash: chunk.textHash,
-      });
-      if (error) throw error;
-      inserted += 1;
+      if (!existing) toInsert.push(candidate);
     }
 
-    if ((index + 1) % 10 === 0) {
+    if (toInsert.length === 0) {
       await upsertCheckpoint(filePath, {
         status: 'running',
         last_processed_page: index + 1,
         questions_ingested: inserted,
       });
+      continue;
+    }
+
+    if (opts.dryRun) {
+      inserted += toInsert.length;
+      sinceLastCheckpoint += toInsert.length;
+    } else {
+      const tagged = opts.skipTagging
+        ? toInsert.map(() => ({ section: 'quant' as Section, topic: 'unclassified', difficulty: 'medium' as const, type: opts.sourceType, correct_answer: null, explanation: null }))
+        : await tagInBatches(toInsert.map((q) => q.text), opts.sourceType, 10, 2000);
+
+      const embeddings = opts.skipEmbedding
+        ? toInsert.map(() => null)
+        : await embedInBatches(toInsert.map((q) => q.text), 32);
+
+      const rows = toInsert.map((question, i) => ({
+        text: question.text,
+        options: question.options,
+        correct_answer: tagged[i]?.correct_answer ?? null,
+        explanation: tagged[i]?.explanation ?? null,
+        section: opts.section === 'auto' ? (tagged[i]?.section ?? 'quant') : opts.section,
+        topic: tagged[i]?.topic ?? 'unclassified',
+        difficulty: tagged[i]?.difficulty ?? 'medium',
+        source,
+        type: opts.sourceType,
+        embedding: embeddings[i] ?? null,
+        text_hash: question.textHash,
+      }));
+
+      const { error } = await supabase.from('questions').insert(rows);
+      if (error) throw error;
+
+      inserted += rows.length;
+      sinceLastCheckpoint += rows.length;
+    }
+
+    if (sinceLastCheckpoint >= 100 || (index + 1) % 5 === 0) {
+      await upsertCheckpoint(filePath, {
+        status: 'running',
+        last_processed_page: index + 1,
+        questions_ingested: inserted,
+      });
+      sinceLastCheckpoint = 0;
     }
   }
 
   await upsertCheckpoint(filePath, {
     status: 'completed',
-    last_processed_page: limitedPages.length,
+    last_processed_page: effectivePages.length,
     questions_ingested: inserted,
   });
 
-  return { filePath, section: opts.section === 'auto' ? 'mixed-auto' : defaultSection, inserted };
+  return { filePath, inserted };
 }
 
 function parseCli(): IngestOptions {
@@ -168,6 +202,8 @@ function parseCli(): IngestOptions {
       source: { type: 'string' },
       'dry-run': { type: 'boolean' },
       'limit-pages': { type: 'string' },
+      'skip-tagging': { type: 'boolean' },
+      'skip-embedding': { type: 'boolean' },
     },
   });
 
@@ -190,10 +226,12 @@ function parseCli(): IngestOptions {
     file: values.file,
     dir: values.dir,
     section: sectionArg as Section | 'auto',
-    sourceType: sourceTypeArg as SourceType,
+    sourceType: sourceTypeArg as IngestSourceType,
     sourceLabel: values.source,
     dryRun: Boolean(values['dry-run']),
     limitPages,
+    skipTagging: Boolean(values['skip-tagging']),
+    skipEmbedding: Boolean(values['skip-embedding']),
   };
 }
 
@@ -208,7 +246,7 @@ async function main() {
     throw new Error('No PDF files found to ingest.');
   }
 
-  let total = 0;
+  let totalInserted = 0;
   for (const filePath of files) {
     const result = await ingestOneFile(filePath, {
       section: opts.section,
@@ -216,13 +254,15 @@ async function main() {
       sourceLabel: opts.sourceLabel,
       dryRun: opts.dryRun,
       limitPages: opts.limitPages,
+      skipTagging: opts.skipTagging,
+      skipEmbedding: opts.skipEmbedding,
     });
 
-    total += result.inserted;
-    console.log(`[ingest] ${path.basename(result.filePath)} | section=${result.section} | running_total=${total}`);
+    totalInserted += result.inserted;
+    console.log(`[ingest] ${path.basename(result.filePath)} | running_total=${totalInserted}`);
   }
 
-  console.log(`Ingestion complete. Total inserted (or parsed in dry-run): ${total}`);
+  console.log(`Ingestion complete. Total inserted (or parsed in dry-run): ${totalInserted}`);
 }
 
 main().catch((error) => {

@@ -13,6 +13,20 @@ interface GenerationTask {
   count: number;
 }
 
+function computeWeakScore(args: {
+  accuracy: number;
+  attempts: number;
+  avgTimeSeconds: number;
+  lastThreeDeclining: boolean;
+}) {
+  const raw =
+    (1 - args.accuracy) * 0.6 +
+    (args.avgTimeSeconds > 120 ? 0.2 : 0) +
+    (args.attempts < 5 ? 0.3 : 0) +
+    (args.lastThreeDeclining ? 0.2 : 0);
+  return Math.max(0, Math.min(1, raw));
+}
+
 function splitTotal(total: number) {
   const safeTotal = Math.max(3, total);
   const ratios: Array<{ section: Section; weight: number }> = [
@@ -214,6 +228,77 @@ async function persistGeneratedQuestions(questions: Question[]) {
   if (error) throw error;
 }
 
+async function updateUserTopicPerformance(args: {
+  userId: string;
+  questions: Question[];
+  answers: Record<string, string>;
+}) {
+  const supabase = createAdminSupabase();
+  const attempted = args.questions.filter((q) => Boolean(args.answers[q.id]));
+  if (attempted.length === 0) return;
+
+  const grouped = new Map<string, { section: Section; topic: string; attempts: number; correct: number }>();
+  for (const question of attempted) {
+    const key = `${question.section}::${question.topic}`;
+    const current = grouped.get(key) ?? {
+      section: question.section,
+      topic: question.topic,
+      attempts: 0,
+      correct: 0,
+    };
+    current.attempts += 1;
+    if (args.answers[question.id] === question.correctAnswer) current.correct += 1;
+    grouped.set(key, current);
+  }
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('user_topic_performance')
+    .select('id, section, topic, attempts, correct, avg_time_seconds')
+    .eq('user_id', args.userId);
+  if (existingError) throw existingError;
+
+  const existingMap = new Map<string, { id: string; attempts: number; correct: number; avg_time_seconds: number | null }>();
+  for (const row of existingRows ?? []) {
+    existingMap.set(`${row.section}::${row.topic}`, {
+      id: String(row.id),
+      attempts: Number(row.attempts ?? 0),
+      correct: Number(row.correct ?? 0),
+      avg_time_seconds: typeof row.avg_time_seconds === 'number' ? row.avg_time_seconds : null,
+    });
+  }
+
+  const payload = Array.from(grouped.values()).map((row) => {
+    const existing = existingMap.get(`${row.section}::${row.topic}`);
+    const attempts = (existing?.attempts ?? 0) + row.attempts;
+    const correct = (existing?.correct ?? 0) + row.correct;
+    const accuracy = attempts > 0 ? correct / attempts : 0;
+    const avgTimeSeconds = existing?.avg_time_seconds ?? 0;
+    const weakScore = computeWeakScore({
+      accuracy,
+      attempts,
+      avgTimeSeconds,
+      lastThreeDeclining: false,
+    });
+
+    return {
+      user_id: args.userId,
+      section: row.section,
+      topic: row.topic,
+      attempts,
+      correct,
+      accuracy,
+      avg_time_seconds: avgTimeSeconds,
+      weak_score: weakScore,
+      last_updated: new Date().toISOString(),
+    };
+  });
+
+  const { error: upsertError } = await supabase
+    .from('user_topic_performance')
+    .upsert(payload, { onConflict: 'user_id,section,topic' });
+  if (upsertError) throw upsertError;
+}
+
 export async function createMock(args: {
   userId: string;
   type: 'full' | 'section' | 'topic';
@@ -338,6 +423,12 @@ export async function submitMock(args: { userId: string; mockId: string; answers
     const { error: attemptsError } = await supabase.from('user_attempts').insert(attempts);
     if (attemptsError) throw attemptsError;
   }
+
+  await updateUserTopicPerformance({
+    userId: args.userId,
+    questions,
+    answers: args.answers,
+  });
 
   const { error: updateError } = await supabase
     .from('mocks')
