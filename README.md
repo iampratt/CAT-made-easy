@@ -70,9 +70,16 @@ pnpm dev
 pnpm lint
 pnpm typecheck
 pnpm build
-pnpm review:pdf --file ./books/cat-2022.pdf
-pnpm ingest:pdf --file ./books/cat-2022.pdf --section quant
+pnpm review:pdf --file ./books/cat-2022.pdf --pages 20
+pnpm ingest:pdf --file ./books/cat-2022.pdf --section auto --source-type past_paper
+pnpm ingest:pdf --file ./books/arun-sharma-quant.pdf --section quant --source-type book
+pnpm ingest:dir ./books --section auto --source-type past_paper
 ```
+
+Notes:
+- Use `--section auto` to infer section from filename (`varc`, `dilr/lrdi`, else `quant`).
+- Use `--source-type past_paper` for PYQs and `--source-type book` for Arun Sharma or other prep books.
+- Use `--dry-run` to test parsing without DB inserts.
 
 ## Deployment (Vercel)
 

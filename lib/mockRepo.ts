@@ -261,6 +261,11 @@ export async function createMock(args: {
       excludeIds,
       count: Math.max(10, task.count),
     });
+    if (references.length < 3) {
+      throw new Error(
+        `Insufficient ingested corpus for ${task.section}/${task.topic}/${task.difficulty}. Ingest more PYQ/book PDFs first.`,
+      );
+    }
 
     let generated: Question[] = [];
     let retries = 0;
