@@ -89,11 +89,11 @@ pnpm build
 
 - Ingestion is designed to run locally, not on Vercel.
 - Live query embedding is intentionally avoided in runtime APIs; retrieval is metadata + full-text based.
-- Current generation endpoints create DB-backed mock payloads and are ready for replacing placeholders with production chain outputs.
+- Generation endpoints run retrieval + Groq generation + verifier loop and persist generated questions into `questions`.
 
 ## Next Hardening Steps
 
-1. Replace placeholder question generation in `lib/mockRepo.ts` with full retrieval + Groq generation + verification chain.
-2. Add real user session binding in API routes (instead of fallback user ID).
-3. Add integration tests for `/api/generate/*`, `/api/mock/*`, and `/api/search`.
+1. Add real user session binding in API routes so `userId` is inferred from authenticated session.
+2. Add integration tests for `/api/generate/*`, `/api/mock/*`, and `/api/search`.
+3. Tighten topic taxonomy mapping during ingestion for cleaner weak-area analytics.
 4. Add ingestion QA loop (`scripts/reviewer.ts`) with pass/fail gating.

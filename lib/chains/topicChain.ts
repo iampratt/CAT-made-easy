@@ -1,1 +1,1 @@
-export { generateSectionQuestions as generateTopicPractice } from '@/lib/chains/mockChain';
+export { generateVerifiedQuestions as generateTopicPractice } from '@/lib/chains/mockChain';

@@ -5,7 +5,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const result = await createMock({
-      userId: body.userId ?? '00000000-0000-0000-0000-000000000000',
+      userId: body.userId ?? null,
       type: 'section',
       section: body.section ?? 'quant',
       topic: body.topic,
