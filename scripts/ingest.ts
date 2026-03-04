@@ -28,6 +28,29 @@ function inferSection(filePath: string): Section {
   return 'quant';
 }
 
+function inferSectionFromQuestion(text: string, options: string[]): Section {
+  const content = `${text} ${options.join(' ')}`.toLowerCase();
+
+  if (
+    /passage|author|inference|paragraph|implied|argument|statement/.test(content) ||
+    text.length > 180
+  ) {
+    return 'varc';
+  }
+
+  if (
+    /table|bar chart|line chart|pie chart|arrangement|scheduling|seating|set of people|distribution/.test(content)
+  ) {
+    return 'dilr';
+  }
+
+  if (/\d|%|ratio|profit|loss|distance|speed|time|work|mixture|equation|integer/.test(content)) {
+    return 'quant';
+  }
+
+  return 'quant';
+}
+
 async function listPdfFiles(rootDir: string): Promise<string[]> {
   const queue = [rootDir];
   const files: string[] = [];
@@ -70,7 +93,7 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
   const supabase = createAdminSupabase();
   const checkpoint = await getCheckpoint(filePath);
   const startPage = Number(checkpoint?.last_processed_page ?? 0);
-  const section = opts.section === 'auto' ? inferSection(filePath) : opts.section;
+  const defaultSection = opts.section === 'auto' ? inferSection(filePath) : opts.section;
   const source = opts.sourceLabel?.trim() || path.basename(filePath, path.extname(filePath));
 
   const pages = await parsePdfPages(filePath);
@@ -106,7 +129,7 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
         options: chunk.options,
         correct_answer: null,
         explanation: null,
-        section,
+        section: opts.section === 'auto' ? inferSectionFromQuestion(chunk.text, chunk.options) : defaultSection,
         topic: 'unclassified',
         difficulty: 'medium',
         source,
@@ -132,7 +155,7 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
     questions_ingested: inserted,
   });
 
-  return { filePath, section, inserted };
+  return { filePath, section: opts.section === 'auto' ? 'mixed-auto' : defaultSection, inserted };
 }
 
 function parseCli(): IngestOptions {

@@ -8,6 +8,6 @@ function client(model: string, temperature = 0.2) {
   return new ChatGroq({ apiKey: env.GROQ_API_KEY, model, temperature });
 }
 
-export const groq70b = () => client('llama-3.3-70b-versatile', 0.4);
-export const groq8b = () => client('llama-3.1-8b-instant', 0.2);
-export const groqVerify = () => client('gemma2-9b-it', 0.1);
+export const groq70b = () => client(env.GROQ_GENERATION_MODEL ?? 'llama-3.3-70b-versatile', 0.4);
+export const groq8b = () => client(env.GROQ_FAST_MODEL ?? 'llama-3.1-8b-instant', 0.2);
+export const groqVerify = () => client(env.GROQ_VERIFY_MODEL ?? 'llama-3.1-8b-instant', 0.1);

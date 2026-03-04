@@ -4,7 +4,8 @@ export interface ParsedQuestionChunk {
 }
 
 const START_REGEX = /(?:^|\n)\s*(?:Q(?:uestion)?\s*)?(\d{1,3})[\).:-]\s+/gi;
-const OPTION_START_REGEX = /^\s*([A-D])[\).:-]\s*/i;
+const OPTION_START_REGEX = /^\s*([A-D])(?:[\).:-]\s*|\s+)/i;
+const INLINE_OPTION_REGEX = /(?:^|\s)([A-D])(?:[\).:-]\s*|\s+)/gi;
 
 function cleanLine(line: string) {
   return line
@@ -64,6 +65,33 @@ export function splitQuantVarcQuestions(pageText: string): ParsedQuestionChunk[]
 
   return blocks
     .map((block) => {
+      const normalizedBlock = cleanLine(block);
+      const inlineMatches = Array.from(normalizedBlock.matchAll(INLINE_OPTION_REGEX));
+
+      if (inlineMatches.length >= 4) {
+        const firstStart = (inlineMatches[0].index ?? 0) + inlineMatches[0][0].search(/[A-D]/i);
+        const questionText = normalizedBlock
+          .slice(0, firstStart)
+          .replace(/^(?:Q(?:uestion)?\s*)?\d{1,3}[\).:-]\s*/i, '')
+          .trim();
+
+        const options: string[] = [];
+        for (let i = 0; i < inlineMatches.length; i += 1) {
+          const label = inlineMatches[i][1].toUpperCase();
+          const bodyStart = (inlineMatches[i].index ?? 0) + inlineMatches[i][0].length;
+          const bodyEnd = i + 1 < inlineMatches.length ? (inlineMatches[i + 1].index ?? normalizedBlock.length) : normalizedBlock.length;
+          const body = cleanLine(normalizedBlock.slice(bodyStart, bodyEnd));
+          if (['A', 'B', 'C', 'D'].includes(label)) {
+            options.push(`${label}) ${body}`);
+          }
+          if (options.length === 4) break;
+        }
+
+        if (questionText.length >= 20 && options.length === 4) {
+          return { text: questionText, options };
+        }
+      }
+
       const lines = block.split('\n').map(cleanLine).filter(Boolean);
       if (lines.length === 0) return null;
 

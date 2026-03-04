@@ -9,20 +9,37 @@ export default function MockConfigPage() {
   const [topic, setTopic] = useState('time and work');
   const [count, setCount] = useState(22);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const res = await fetch(`/api/generate/${type}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ section, topic, count }),
-    });
-    const data = await res.json();
-    setLoading(false);
-    if (data.mockId) {
-      router.push(`/mock/${data.mockId}`);
+    setError(null);
+
+    try {
+      const route = type === 'full' ? 'mock' : type;
+      const res = await fetch(`/api/generate/${route}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ section, topic, count }),
+      });
+
+      const contentType = res.headers.get('content-type') ?? '';
+      const payload = contentType.includes('application/json')
+        ? await res.json()
+        : { error: `Unexpected response from server (${res.status}).` };
+
+      if (!res.ok || !payload.mockId) {
+        setError(payload.error ?? 'Failed to generate mock. Please try again.');
+        return;
+      }
+
+      router.push(`/mock/${payload.mockId}`);
+    } catch {
+      setError('Network error while generating mock. Please retry.');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -57,6 +74,7 @@ export default function MockConfigPage() {
             <input id="count" className="input" type="number" min={4} max={66} value={count} onChange={(e) => setCount(Number(e.target.value))} />
           </div>
         </div>
+        {error ? <p style={{ color: 'var(--danger)' }}>{error}</p> : null}
         <button className="btn" disabled={loading}>{loading ? 'Generating...' : 'Generate'}</button>
       </form>
     </section>
