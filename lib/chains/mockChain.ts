@@ -47,10 +47,46 @@ function extractJsonBlock(content: string) {
   throw new Error('Model did not return JSON content.');
 }
 
+function sanitizeJsonCandidate(input: string) {
+  return input
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .trim();
+}
+
+function parseLooseJson(raw: string): unknown {
+  const base = extractJsonBlock(raw);
+  const candidates: string[] = [base, sanitizeJsonCandidate(base)];
+
+  const questionsMatch = base.match(/"questions"\s*:\s*(\[[\s\S]*\])/);
+  if (questionsMatch?.[1]) {
+    candidates.push(questionsMatch[1], sanitizeJsonCandidate(questionsMatch[1]));
+  }
+
+  const arrayStart = base.indexOf('[');
+  const arrayEnd = base.lastIndexOf(']');
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    const arr = base.slice(arrayStart, arrayEnd + 1);
+    candidates.push(arr, sanitizeJsonCandidate(arr));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // try next candidate
+    }
+  }
+
+  throw new Error('Unable to parse model JSON response.');
+}
+
 function parseGeneratedQuestions(raw: string): GeneratedQuestionShape[] {
-  const json = JSON.parse(extractJsonBlock(raw)) as { questions?: GeneratedQuestionShape[] } | GeneratedQuestionShape[];
+  const json = parseLooseJson(raw) as { questions?: GeneratedQuestionShape[] } | GeneratedQuestionShape[];
   if (Array.isArray(json)) return json;
-  return json.questions ?? [];
+  return Array.isArray(json.questions) ? json.questions : [];
 }
 
 function normalizeOptions(options: string[] | undefined) {
@@ -95,10 +131,10 @@ async function verifyQuestion(question: Question) {
   const verifier = groqVerify();
   const prompt = `Verify this CAT question and answer key.\nQuestion: ${question.text}\nOptions: ${question.options.join(' | ')}\nStated answer: ${question.correctAnswer}\nExplanation: ${question.explanation}\n\nReturn ONLY JSON: {"valid": true|false, "issue": "..."}`;
   const response = await verifier.invoke(prompt);
-  const parsed = JSON.parse(extractJsonBlock(String(response.content ?? '')));
+  const parsed = parseLooseJson(String(response.content ?? '')) as { valid?: boolean; issue?: string };
   return {
-    valid: Boolean((parsed as { valid?: boolean }).valid),
-    issue: String((parsed as { issue?: string }).issue ?? ''),
+    valid: Boolean(parsed.valid),
+    issue: String(parsed.issue ?? ''),
   };
 }
 
