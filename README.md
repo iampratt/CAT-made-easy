@@ -14,6 +14,8 @@ Deploy-ready CAT preparation platform with personalized mock generation, PYQ ful
 ## Features Implemented
 
 - Auth pages for email/password login and signup
+- Route protection via Next.js `proxy.ts` for dashboard/mock/practice/PYQ
+- Session-aware navbar with login/signup state and logout action
 - Dashboard with score cards and trend chart
 - Mock config flow (`full`, `section`, `topic`)
 - Live exam UI with timer, question navigation, mark-for-review, progress save, submit

@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
 import { runPyqSearch } from '@/lib/chains/pyqChain';
+import { createServerSupabase } from '@/lib/supabase/server';
 
 export async function POST(req: Request) {
   try {
+    const supabase = await createServerSupabase();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     const body = await req.json();
     const query = String(body.query ?? '');
     const section = body.section ?? null;

@@ -1,10 +1,10 @@
-import { createAdminSupabase } from '@/lib/supabase/admin';
 import { ScoreCard } from '@/components/ScoreCard';
+import { requireServerUser } from '@/lib/auth';
 
 export default async function MockResultsPage({ params }: { params: Promise<{ mockId: string }> }) {
   const { mockId } = await params;
-  const supabase = createAdminSupabase();
-  const { data } = await supabase.from('mocks').select('score').eq('id', mockId).single();
+  const { user, supabase } = await requireServerUser();
+  const { data } = await supabase.from('mocks').select('score').eq('id', mockId).eq('user_id', user.id).single();
   const score = (data?.score as Record<string, number>) ?? {};
 
   return (

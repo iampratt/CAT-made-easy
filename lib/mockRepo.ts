@@ -215,15 +215,19 @@ async function persistGeneratedQuestions(questions: Question[]) {
 }
 
 export async function createMock(args: {
-  userId?: string | null;
+  userId: string;
   type: 'full' | 'section' | 'topic';
   section?: Section;
   topic?: string;
   count: number;
 }) {
   const safeSection = args.section ?? 'quant';
-  const safeUserId = args.userId ?? null;
+  const safeUserId = args.userId;
   const supabase = createAdminSupabase();
+  const { error: userUpsertError } = await supabase
+    .from('users')
+    .upsert({ id: safeUserId }, { onConflict: 'id', ignoreDuplicates: false });
+  if (userUpsertError) throw userUpsertError;
 
   const excludeIds = await getExcludeIds(safeUserId);
   const topicsBySection: Record<Section, string[]> = {
@@ -300,9 +304,14 @@ export async function createMock(args: {
   return { mockId: data.id };
 }
 
-export async function submitMock(args: { mockId: string; answers: Record<string, string> }) {
+export async function submitMock(args: { userId: string; mockId: string; answers: Record<string, string> }) {
   const supabase = createAdminSupabase();
-  const { data, error } = await supabase.from('mocks').select('question_payload, user_id').eq('id', args.mockId).single();
+  const { data, error } = await supabase
+    .from('mocks')
+    .select('question_payload, user_id')
+    .eq('id', args.mockId)
+    .eq('user_id', args.userId)
+    .single();
   if (error || !data?.question_payload) throw error ?? new Error('Mock not found');
 
   const questions = data.question_payload as Question[];
@@ -334,8 +343,12 @@ export async function submitMock(args: { mockId: string; answers: Record<string,
   return score;
 }
 
-export async function saveMockProgress(args: { mockId: string; answers: Record<string, string> }) {
+export async function saveMockProgress(args: { userId: string; mockId: string; answers: Record<string, string> }) {
   const supabase = createAdminSupabase();
-  const { error } = await supabase.from('mocks').update({ progress: args.answers }).eq('id', args.mockId);
+  const { error } = await supabase
+    .from('mocks')
+    .update({ progress: args.answers })
+    .eq('id', args.mockId)
+    .eq('user_id', args.userId);
   if (error) throw error;
 }

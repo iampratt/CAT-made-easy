@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { ScoreCard } from '@/components/ScoreCard';
+import { requireServerUser } from '@/lib/auth';
+
+export const dynamic = 'force-dynamic';
 
 const trend = [
   { name: 'M1', quant: 48, dilr: 42, varc: 58 },
@@ -9,7 +12,8 @@ const trend = [
   { name: 'M4', quant: 64, dilr: 57, varc: 70 },
 ];
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  await requireServerUser();
   return (
     <section className="grid" style={{ gap: 16 }}>
       <div className="grid grid-3">

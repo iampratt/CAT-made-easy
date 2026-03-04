@@ -20,7 +20,8 @@ export default function LoginPage() {
       setError(signInError.message);
       return;
     }
-    router.push('/dashboard');
+    const params = new URLSearchParams(window.location.search);
+    router.push(params.get('redirect') ?? '/dashboard');
   }
 
   return (

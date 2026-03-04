@@ -52,6 +52,16 @@ a {
   display: flex;
   gap: 16px;
   font-size: 14px;
+  align-items: center;
+}
+
+.nav-logout {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .page {

@@ -23,7 +23,8 @@ export default function SignupPage() {
     }
 
     await supabase.from('users').upsert({ id: data.user.id, name, target_percentile: 95 });
-    router.push('/dashboard');
+    const params = new URLSearchParams(window.location.search);
+    router.push(params.get('redirect') ?? '/dashboard');
   }
 
   return (
