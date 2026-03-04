@@ -195,24 +195,38 @@ alter table mocks enable row level security;
 alter table user_attempts enable row level security;
 alter table user_topic_performance enable row level security;
 
-create policy if not exists users_select_own on users
+drop policy if exists users_select_own on users;
+create policy users_select_own on users
   for select using (auth.uid() = id);
-create policy if not exists users_update_own on users
+
+drop policy if exists users_update_own on users;
+create policy users_update_own on users
   for update using (auth.uid() = id);
-create policy if not exists users_insert_own on users
+
+drop policy if exists users_insert_own on users;
+create policy users_insert_own on users
   for insert with check (auth.uid() = id);
 
-create policy if not exists mocks_select_own on mocks
+drop policy if exists mocks_select_own on mocks;
+create policy mocks_select_own on mocks
   for select using (auth.uid() = user_id);
-create policy if not exists mocks_write_own on mocks
+
+drop policy if exists mocks_write_own on mocks;
+create policy mocks_write_own on mocks
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
-create policy if not exists attempts_select_own on user_attempts
+drop policy if exists attempts_select_own on user_attempts;
+create policy attempts_select_own on user_attempts
   for select using (auth.uid() = user_id);
-create policy if not exists attempts_write_own on user_attempts
+
+drop policy if exists attempts_write_own on user_attempts;
+create policy attempts_write_own on user_attempts
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
-create policy if not exists perf_select_own on user_topic_performance
+drop policy if exists perf_select_own on user_topic_performance;
+create policy perf_select_own on user_topic_performance
   for select using (auth.uid() = user_id);
-create policy if not exists perf_write_own on user_topic_performance
+
+drop policy if exists perf_write_own on user_topic_performance;
+create policy perf_write_own on user_topic_performance
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
