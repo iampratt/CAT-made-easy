@@ -25,8 +25,9 @@ export default function LoginPage() {
   }
 
   return (
-    <section className="card" style={{ maxWidth: 460 }}>
-      <h1 style={{ marginTop: 0 }}>Login</h1>
+    <section className="card auth-card">
+      <h1>Login</h1>
+      <p className="muted">Continue your CAT prep with your personalized progression profile.</p>
       <form onSubmit={onSubmit}>
         <div className="form-row">
           <div>

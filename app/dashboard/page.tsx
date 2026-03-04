@@ -23,8 +23,8 @@ export default async function DashboardPage() {
       </div>
       <PerformanceChart data={trend} />
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Actions</h3>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <h3>Actions</h3>
+        <div className="row-actions">
           <Link className="btn" href="/mock">Generate New Mock</Link>
           <Link className="btn secondary" href="/practice/topic">Practice Weak Topics</Link>
           <Link className="btn secondary" href="/pyq">Search PYQs</Link>

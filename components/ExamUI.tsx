@@ -40,7 +40,7 @@ export function ExamUI({ mockId, questions, initialSeconds }: { mockId: string; 
 
   return (
     <section className="grid" style={{ gap: 12 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div className="exam-toolbar">
         <Timer initialSeconds={initialSeconds} onExpire={submit} />
         <button className="btn secondary" onClick={saveProgress}>Save Progress</button>
         <button className="btn" onClick={submit}>Submit Mock</button>
@@ -63,7 +63,7 @@ export function ExamUI({ mockId, questions, initialSeconds }: { mockId: string; 
               setAnswers((prev) => ({ ...prev, [question.id]: answer }));
             }}
           />
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="question-actions">
             <button
               type="button"
               className="btn secondary"

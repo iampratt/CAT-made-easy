@@ -27,8 +27,9 @@ export default function MockConfigPage() {
   }
 
   return (
-    <section className="card" style={{ maxWidth: 560 }}>
-      <h1 style={{ marginTop: 0 }}>Mock Configuration</h1>
+    <section className="card form-shell">
+      <h1>Mock Configuration</h1>
+      <p className="muted">Set format, section focus, and question count. The generator adapts difficulty from your history.</p>
       <form onSubmit={onSubmit}>
         <div className="form-row">
           <div>

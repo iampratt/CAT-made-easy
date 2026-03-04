@@ -25,7 +25,7 @@ export function Timer({ initialSeconds, onExpire }: { initialSeconds: number; on
   const danger = seconds <= 300;
 
   return (
-    <div className="card" style={{ color: danger ? 'var(--danger)' : 'inherit' }}>
+    <div className={`card timer ${danger ? 'is-danger' : ''}`}>
       <strong>Time Left:</strong> {String(min).padStart(2, '0')}:{String(sec).padStart(2, '0')}
     </div>
   );

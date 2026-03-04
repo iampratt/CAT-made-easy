@@ -28,8 +28,9 @@ export default function SignupPage() {
   }
 
   return (
-    <section className="card" style={{ maxWidth: 460 }}>
-      <h1 style={{ marginTop: 0 }}>Create Account</h1>
+    <section className="card auth-card">
+      <h1>Create Account</h1>
+      <p className="muted">Create your profile and start adaptive CAT mock practice instantly.</p>
       <form onSubmit={onSubmit}>
         <div className="form-row">
           <div>

@@ -32,7 +32,7 @@ export function PYQSearch() {
     <section className="grid" style={{ gap: 14 }}>
       <form onSubmit={onSubmit} className="card">
         <label htmlFor="query">Search past-year questions</label>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="row-actions">
           <input id="query" className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. time and work" />
           <button className="btn" disabled={loading}>{loading ? 'Searching...' : 'Search'}</button>
         </div>
@@ -41,10 +41,8 @@ export function PYQSearch() {
       <div className="grid">
         {results.map((r) => (
           <article key={r.id} className="card">
-            <p style={{ marginTop: 0, whiteSpace: 'pre-wrap' }}>{r.text}</p>
-            <p className="muted" style={{ marginBottom: 0 }}>
-              {r.topic} · {r.difficulty} · {r.source}
-            </p>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{r.text}</p>
+            <p className="muted">{r.topic} · {r.difficulty} · {r.source}</p>
           </article>
         ))}
       </div>

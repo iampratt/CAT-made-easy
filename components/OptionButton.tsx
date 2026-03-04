@@ -11,12 +11,7 @@ export function OptionButton({ option, selected, onClick }: Props) {
     <button
       type="button"
       onClick={onClick}
-      className="card"
-      style={{
-        textAlign: 'left',
-        borderColor: selected ? 'var(--primary)' : 'var(--border)',
-        boxShadow: selected ? '0 0 0 1px var(--primary) inset' : 'none',
-      }}
+      className={`card option-btn ${selected ? 'active' : ''}`}
     >
       {option}
     </button>

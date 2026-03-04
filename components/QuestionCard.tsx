@@ -12,7 +12,7 @@ export function QuestionCard({
 }) {
   return (
     <article className="card">
-      <h4 style={{ marginTop: 0 }}>{question.topic} · {question.difficulty}</h4>
+      <h4>{question.topic} · {question.difficulty}</h4>
       <p style={{ whiteSpace: 'pre-wrap' }}>{question.text}</p>
       <div className="grid" style={{ marginTop: 10 }}>
         {question.options.map((option) => (
