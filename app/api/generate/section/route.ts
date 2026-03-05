@@ -15,6 +15,8 @@ export async function POST(req: Request) {
       section: body.section ?? 'quant',
       topic: body.topic,
       count: Number(body.count ?? 22),
+      strictRealFirst: body.strictRealFirst ?? true,
+      allowGeneratedFill: body.allowGeneratedFill ?? true,
     });
     return NextResponse.json(result);
   } catch (error) {

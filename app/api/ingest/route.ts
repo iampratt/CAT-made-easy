@@ -7,5 +7,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  return NextResponse.json({ ok: true, message: 'Ingestion trigger accepted. Run local scripts for actual ingestion.' });
+  return NextResponse.json({
+    ok: true,
+    message: 'Use /api/ingest/run to create a run, /api/ingest/run/:id to inspect quality, and /api/ingest/run/:id/approve to publish.',
+  });
 }

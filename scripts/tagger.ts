@@ -6,6 +6,7 @@ export type IngestSourceType = 'past_paper' | 'book';
 export interface TaggedQuestion {
   section: 'quant' | 'dilr' | 'varc';
   topic: string;
+  subtype: string;
   difficulty: 'easy' | 'medium' | 'hard';
   type: IngestSourceType;
   correct_answer: string | null;
@@ -41,6 +42,27 @@ function normalizeDifficulty(raw: string): 'easy' | 'medium' | 'hard' {
   return 'medium';
 }
 
+function guessSubtype(section: 'quant' | 'dilr' | 'varc', question: string) {
+  const lower = question.toLowerCase();
+  if (section === 'quant') {
+    if (/time and work|pipes|cistern/.test(lower)) return 'arithmetic_time_work';
+    if (/ratio|proportion/.test(lower)) return 'arithmetic_ratio';
+    if (/profit|loss|interest/.test(lower)) return 'arithmetic_commercial_math';
+    if (/geometry|triangle|circle/.test(lower)) return 'geometry';
+    return 'quant_mixed';
+  }
+
+  if (section === 'dilr') {
+    if (/seating|arrangement/.test(lower)) return 'lr_arrangement';
+    if (/table|chart|graph/.test(lower)) return 'di_charts_tables';
+    return 'dilr_mixed_set';
+  }
+
+  if (/passage|author|inference/.test(lower)) return 'rc';
+  if (/para\s*jumbles?/.test(lower)) return 'va_parajumbles';
+  return 'varc_mixed';
+}
+
 function fallbackTag(question: string, sourceType: IngestSourceType): TaggedQuestion {
   const lower = question.toLowerCase();
   const section = lower.length > 180 || /passage|author|inference|paragraph/.test(lower)
@@ -52,6 +74,7 @@ function fallbackTag(question: string, sourceType: IngestSourceType): TaggedQues
   return {
     section,
     topic: 'unclassified',
+    subtype: guessSubtype(section, question),
     difficulty: 'medium',
     type: sourceType,
     correct_answer: null,
@@ -63,21 +86,25 @@ export async function tagBatch(questions: string[], sourceType: IngestSourceType
   if (questions.length === 0) return [];
 
   const model = groq8b();
-  const prompt = `You are tagging CAT exam questions.\nCAT DIFFICULTY CALIBRATION:\nEASY: 90th percentile under 60 sec.\nMEDIUM: 95th percentile 60-120 sec.\nHARD: 99th percentile 2-3 minutes or skip.\n\nFor each question return JSON with keys: section, topic, difficulty, type, correct_answer, explanation.\n- section in [quant,dilr,varc]\n- difficulty in [easy,medium,hard]\n- type must be \"${sourceType}\"\n- correct_answer null if unknown\n- explanation null if unknown\nReturn ONLY JSON array with exactly ${questions.length} objects in same order.\n\nQuestions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n\n')}`;
+  const prompt = `You are tagging CAT exam questions.\nCAT DIFFICULTY CALIBRATION:\nEASY: 90th percentile under 60 sec.\nMEDIUM: 95th percentile 60-120 sec.\nHARD: 99th percentile 2-3 minutes or skip.\n\nFor each question return JSON with keys: section, topic, subtype, difficulty, type, correct_answer, explanation.\n- section in [quant,dilr,varc]\n- difficulty in [easy,medium,hard]\n- type must be \"${sourceType}\"\n- subtype should be specific (e.g. arithmetic_time_work, rc, di_charts_tables)\n- correct_answer null if unknown\n- explanation null if unknown\nReturn ONLY JSON array with exactly ${questions.length} objects in same order.\n\nQuestions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n\n')}`;
 
   try {
     const response = await model.invoke(prompt);
     const raw = String(response.content ?? '');
     const parsed = JSON.parse(extractJson(raw)) as Array<Record<string, unknown>>;
 
-    const normalized = parsed.map((item) => ({
-      section: normalizeSection(String(item.section ?? 'quant')),
-      topic: String(item.topic ?? 'unclassified').trim() || 'unclassified',
-      difficulty: normalizeDifficulty(String(item.difficulty ?? 'medium')),
-      type: sourceType,
-      correct_answer: item.correct_answer ? String(item.correct_answer).trim().slice(0, 1).toUpperCase() : null,
-      explanation: item.explanation ? String(item.explanation).trim() : null,
-    })) as TaggedQuestion[];
+    const normalized = parsed.map((item, idx) => {
+      const section = normalizeSection(String(item.section ?? 'quant'));
+      return {
+        section,
+        topic: String(item.topic ?? 'unclassified').trim() || 'unclassified',
+        subtype: String(item.subtype ?? '').trim() || guessSubtype(section, questions[idx] ?? ''),
+        difficulty: normalizeDifficulty(String(item.difficulty ?? 'medium')),
+        type: sourceType,
+        correct_answer: item.correct_answer ? String(item.correct_answer).trim().slice(0, 1).toUpperCase() : null,
+        explanation: item.explanation ? String(item.explanation).trim() : null,
+      };
+    }) as TaggedQuestion[];
 
     if (normalized.length !== questions.length) {
       throw new Error(`Tagger returned ${normalized.length} objects for ${questions.length} questions`);

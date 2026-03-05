@@ -1,16 +1,24 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function MockConfigPage() {
   const [type, setType] = useState<'full' | 'section' | 'topic'>('full');
   const [section, setSection] = useState<'quant' | 'dilr' | 'varc'>('quant');
   const [topic, setTopic] = useState('time and work');
-  const [count, setCount] = useState(22);
+  const [count, setCount] = useState(66);
+  const [allowGeneratedFill, setAllowGeneratedFill] = useState(true);
+  const [strictRealFirst, setStrictRealFirst] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    if (type === 'full') setCount(66);
+    if (type === 'section') setCount(22);
+    if (type === 'topic') setCount(15);
+  }, [type]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,7 +30,14 @@ export default function MockConfigPage() {
       const res = await fetch(`/api/generate/${route}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ section, topic, count }),
+        body: JSON.stringify({
+          section,
+          topic,
+          count,
+          blueprintId: type === 'full' ? 'cat_latest_full' : undefined,
+          strictRealFirst,
+          allowGeneratedFill,
+        }),
       });
 
       const contentType = res.headers.get('content-type') ?? '';
@@ -46,7 +61,7 @@ export default function MockConfigPage() {
   return (
     <section className="card form-shell">
       <h1>Mock Configuration</h1>
-      <p className="muted">Set format, section focus, and question count. The generator adapts difficulty from your history.</p>
+      <p className="muted">CAT blueprint mocks with adaptive topic/subtype weighting and corpus-first retrieval.</p>
       <form onSubmit={onSubmit}>
         <div className="form-row">
           <div>
@@ -73,6 +88,16 @@ export default function MockConfigPage() {
             <label htmlFor="count">Questions</label>
             <input id="count" className="input" type="number" min={4} max={66} value={count} onChange={(e) => setCount(Number(e.target.value))} />
           </div>
+        </div>
+        <div className="form-row" style={{ marginTop: 8 }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={strictRealFirst} onChange={(e) => setStrictRealFirst(e.target.checked)} />
+            Strict real-first retrieval
+          </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={allowGeneratedFill} onChange={(e) => setAllowGeneratedFill(e.target.checked)} />
+            Allow generated fill on corpus shortfall
+          </label>
         </div>
         {error ? <p style={{ color: 'var(--danger)' }}>{error}</p> : null}
         <button className="btn" disabled={loading}>{loading ? 'Generating...' : 'Generate'}</button>

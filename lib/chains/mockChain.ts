@@ -9,6 +9,7 @@ interface ReferenceQuestion {
   correct_answer: string | null;
   explanation: string | null;
   topic: string | null;
+  subtype?: string | null;
   difficulty: Difficulty | null;
   source: string | null;
   set_text: string | null;
@@ -22,6 +23,7 @@ interface GeneratedQuestionShape {
   correct_answer?: string;
   explanation?: string;
   topic?: string;
+  subtype?: string;
   difficulty?: Difficulty;
   set_text?: string;
   passage_text?: string;
@@ -181,6 +183,7 @@ function normalizeOptions(options: string[] | undefined) {
 function normalizeGeneratedQuestion(args: {
   section: Section;
   topic: string;
+  subtype: string;
   difficulty: Difficulty;
   raw: GeneratedQuestionShape;
 }): Question {
@@ -195,8 +198,10 @@ function normalizeGeneratedQuestion(args: {
     explanation: (args.raw.explanation ?? 'Solution not provided by model.').trim(),
     section: args.section,
     topic: (args.raw.topic ?? args.topic).trim(),
+    subtype: (args.raw.subtype ?? args.subtype).trim() || args.subtype,
     difficulty: args.raw.difficulty ?? args.difficulty,
     type: 'generated',
+    origin: 'generated',
     setText: args.section === 'dilr' ? (args.raw.set_text ?? null) : null,
     setImageUrl: null,
     passageText: args.section === 'varc' ? (args.raw.passage_text ?? null) : null,
@@ -223,6 +228,7 @@ async function verifyQuestion(question: Question) {
 async function generateChunk(params: {
   section: Section;
   topic: string;
+  subtype: string;
   difficulty: Difficulty;
   count: number;
   references: ReferenceQuestion[];
@@ -231,7 +237,7 @@ async function generateChunk(params: {
   const prompt = `You are generating CAT exam questions at actual CAT standard.
 Here are ${params.references.length} reference questions for style only:
 ${JSON.stringify(params.references).slice(0, 12000)}
-Generate ${params.count} NEW, ORIGINAL ${params.section} questions on ${params.topic} at ${params.difficulty} difficulty.
+Generate ${params.count} NEW, ORIGINAL ${params.section} questions on topic ${params.topic} and subtype ${params.subtype} at ${params.difficulty} difficulty.
 Rules:
 - Do not copy/paraphrase references.
 - Return exactly ${params.count} questions.
@@ -240,7 +246,7 @@ Rules:
 - VARC: include passage_text for passage-based questions.
 ${params.retryHint ? `Fix this issue from previous attempt: ${params.retryHint}` : ''}
 Return ONLY valid JSON:
-{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct_answer":"A","explanation":"...","topic":"...","difficulty":"${params.difficulty}","set_text":"...","passage_text":"..."}]}`;
+{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct_answer":"A","explanation":"...","topic":"...","subtype":"...","difficulty":"${params.difficulty}","set_text":"...","passage_text":"..."}]}`;
 
   try {
     const response70b = await groq70b().invoke(prompt);
@@ -261,6 +267,7 @@ Return ONLY valid JSON:
 export async function generateVerifiedQuestions(params: {
   section: Section;
   topic: string;
+  subtype: string;
   difficulty: Difficulty;
   count: number;
   references: ReferenceQuestion[];
@@ -269,6 +276,7 @@ export async function generateVerifiedQuestions(params: {
   const normalized = raw.slice(0, params.count).map((item) => normalizeGeneratedQuestion({
     section: params.section,
     topic: params.topic,
+    subtype: params.subtype,
     difficulty: params.difficulty,
     raw: item,
   }));
@@ -290,6 +298,7 @@ export async function generateVerifiedQuestions(params: {
       const regenerated = await generateChunk({
         section: params.section,
         topic: params.topic,
+        subtype: params.subtype,
         difficulty: params.difficulty,
         count: 1,
         references: params.references,
@@ -300,6 +309,7 @@ export async function generateVerifiedQuestions(params: {
       current = normalizeGeneratedQuestion({
         section: params.section,
         topic: params.topic,
+        subtype: params.subtype,
         difficulty: params.difficulty,
         raw: regenerated[0],
       });

@@ -1,6 +1,10 @@
 export interface ParsedQuestionChunk {
   text: string;
   options: string[];
+  questionNo?: number | null;
+  subtype?: string;
+  extractionConfidence?: number;
+  rawBlock?: string;
   passageText?: string | null;
   setText?: string | null;
   sectionHint?: 'quant' | 'dilr' | 'varc';
@@ -62,41 +66,53 @@ function cleanLine(line: string) {
 }
 
 function splitByQuestionStart(text: string) {
-  const matches = Array.from(text.matchAll(ALT_START_REGEX));
-  if (matches.length > 0) {
+  const byAlt = Array.from(text.matchAll(ALT_START_REGEX));
+  ALT_START_REGEX.lastIndex = 0;
+
+  if (byAlt.length > 0) {
     const blocks: string[] = [];
-    for (let i = 0; i < matches.length; i += 1) {
-      const start = matches[i].index ?? 0;
-      const end = i + 1 < matches.length ? (matches[i + 1].index ?? text.length) : text.length;
+    for (let i = 0; i < byAlt.length; i += 1) {
+      const start = byAlt[i].index ?? 0;
+      const end = i + 1 < byAlt.length ? (byAlt[i + 1].index ?? text.length) : text.length;
       const chunk = text.slice(start, end).trim();
       if (chunk) blocks.push(chunk);
     }
     return blocks;
   }
 
-  const fallbackMatches = Array.from(text.matchAll(START_REGEX));
-  if (fallbackMatches.length === 0) return [] as string[];
+  const byBase = Array.from(text.matchAll(START_REGEX));
+  START_REGEX.lastIndex = 0;
+
+  if (byBase.length === 0) return [] as string[];
 
   const blocks: string[] = [];
-  for (let i = 0; i < fallbackMatches.length; i += 1) {
-    const start = fallbackMatches[i].index ?? 0;
-    const end = i + 1 < fallbackMatches.length ? (fallbackMatches[i + 1].index ?? text.length) : text.length;
+  for (let i = 0; i < byBase.length; i += 1) {
+    const start = byBase[i].index ?? 0;
+    const end = i + 1 < byBase.length ? (byBase[i + 1].index ?? text.length) : text.length;
     const chunk = text.slice(start, end).trim();
     if (chunk) blocks.push(chunk);
   }
+
   return blocks;
 }
 
 function firstQuestionStart(pageText: string) {
-  const alt = ALT_START_REGEX.exec(pageText);
+  const alt = pageText.match(ALT_START_REGEX);
   ALT_START_REGEX.lastIndex = 0;
-  if (alt && typeof alt.index === 'number') return alt.index;
+  if (alt?.index !== undefined) return alt.index;
 
-  const base = START_REGEX.exec(pageText);
+  const base = pageText.match(START_REGEX);
   START_REGEX.lastIndex = 0;
-  if (base && typeof base.index === 'number') return base.index;
+  if (base?.index !== undefined) return base.index;
 
   return null;
+}
+
+function extractQuestionNo(value: string): number | null {
+  const match = value.match(/^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})\s*[\).:-]\s*/i);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function stripQuestionPrefix(value: string) {
@@ -107,7 +123,8 @@ function stripQuestionPrefix(value: string) {
 
 function parseInlineOptions(block: string) {
   const inlineMatches = Array.from(block.matchAll(INLINE_OPTION_REGEX));
-  if (inlineMatches.length === 0) return null;
+  INLINE_OPTION_REGEX.lastIndex = 0;
+
   if (inlineMatches.length < 4) return null;
 
   const firstStart = inlineMatches[0].index ?? 0;
@@ -127,6 +144,7 @@ function parseInlineOptions(block: string) {
     options.push(`${label}) ${body}`);
     if (options.length === 4) break;
   }
+
   return options.length === 4 ? { questionText, options } : null;
 }
 
@@ -169,13 +187,56 @@ function extractLeadContext(pageText: string) {
 
 function inferSectionHint(questionText: string, leadContext: string): 'quant' | 'dilr' | 'varc' {
   const text = `${leadContext} ${questionText}`.toLowerCase();
-  if (/passage|author|inference|paragraph|argument|implied/.test(text) || leadContext.length > 280) {
+  if (/passage|author|inference|paragraph|argument|implied|sentence\s+order|para\s*jumbles?/.test(text) || leadContext.length > 280) {
     return 'varc';
   }
-  if (/table|chart|distribution|arrangement|seating|route|venn/.test(text)) {
+  if (/table|chart|distribution|arrangement|seating|route|venn|graph|network|tournament/.test(text)) {
     return 'dilr';
   }
   return 'quant';
+}
+
+function inferSubtype(section: 'quant' | 'dilr' | 'varc', text: string) {
+  const lower = text.toLowerCase();
+
+  if (section === 'quant') {
+    if (/profit|loss|discount|simple interest|compound interest/.test(lower)) return 'arithmetic_commercial_math';
+    if (/time and work|pipes|cistern/.test(lower)) return 'arithmetic_time_work';
+    if (/mixture|alligation/.test(lower)) return 'arithmetic_mixtures';
+    if (/ratio|proportion|partnership/.test(lower)) return 'arithmetic_ratio';
+    if (/geometry|triangle|circle|polygon|angle/.test(lower)) return 'geometry';
+    if (/algebra|equation|polynomial|quadratic|roots/.test(lower)) return 'algebra';
+    if (/number\s*system|remainder|divisibility|hcf|lcm/.test(lower)) return 'number_systems';
+    if (/permutation|combination|probability/.test(lower)) return 'modern_math';
+    return 'quant_mixed';
+  }
+
+  if (section === 'dilr') {
+    if (/arrangement|seating|circular|linear/.test(lower)) return 'lr_arrangement';
+    if (/table|chart|graph|bar|line|pie/.test(lower)) return 'di_charts_tables';
+    if (/routes?|network|distance|assignment|matching/.test(lower)) return 'lr_network_assignment';
+    if (/venn|set/.test(lower)) return 'di_venn_sets';
+    return 'dilr_mixed_set';
+  }
+
+  if (/passage|author|inference|tone|main idea/.test(lower)) return 'rc';
+  if (/para\s*jumbles?|sentence\s*order/.test(lower)) return 'va_parajumbles';
+  if (/odd sentence|out of context/.test(lower)) return 'va_odd_sentence';
+  if (/summary/.test(lower)) return 'va_summary';
+  return 'varc_mixed';
+}
+
+function computeExtractionConfidence(args: { questionText: string; options: string[]; questionNo: number | null; leadContext: string }) {
+  let score = 0.4;
+
+  if (args.questionText.length >= 35) score += 0.2;
+  if (args.questionNo !== null) score += 0.1;
+
+  const completeOptions = args.options.filter((opt) => !/not found/i.test(opt)).length;
+  score += (completeOptions / 4) * 0.25;
+
+  if (args.leadContext.length > 40) score += 0.05;
+  return Math.max(0, Math.min(1, score));
 }
 
 export function splitQuantVarcQuestions(pageText: string): ParsedQuestionChunk[] {
@@ -184,42 +245,51 @@ export function splitQuantVarcQuestions(pageText: string): ParsedQuestionChunk[]
   const out: ParsedQuestionChunk[] = [];
 
   for (const block of blocks) {
-      const normalizedBlock = cleanLine(block);
-      let questionText = '';
-      let options: string[] = [];
+    const normalizedBlock = cleanLine(block);
+    const questionNo = extractQuestionNo(normalizedBlock);
 
-      const inline = parseInlineOptions(normalizedBlock);
-      if (inline) {
-        questionText = inline.questionText;
-        options = inline.options;
-      }
+    let questionText = '';
+    let options: string[] = [];
 
-      if (!questionText || options.length !== 4) {
-        const lines = block.split('\n').map(cleanLine).filter(Boolean);
-        if (lines.length === 0) continue;
+    const inline = parseInlineOptions(normalizedBlock);
+    if (inline) {
+      questionText = inline.questionText;
+      options = inline.options;
+    }
 
-        const firstOptionIndex = lines.findIndex((line) => parseOptionStart(line) !== null);
-        const questionLines = firstOptionIndex >= 0 ? lines.slice(0, firstOptionIndex) : lines;
-        const optionsLines = firstOptionIndex >= 0 ? lines.slice(firstOptionIndex) : [];
+    if (!questionText || options.length !== 4) {
+      const lines = block.split('\n').map(cleanLine).filter(Boolean);
+      if (lines.length === 0) continue;
 
-        questionText = questionLines
-          .join(' ')
-          .replace(/^(?:Q(?:uestion)?\.?\s*)?\d{1,3}\s*[\).:-]\s*/i, '')
-          .trim();
+      const firstOptionIndex = lines.findIndex((line) => parseOptionStart(line) !== null);
+      const questionLines = firstOptionIndex >= 0 ? lines.slice(0, firstOptionIndex) : lines;
+      const optionsLines = firstOptionIndex >= 0 ? lines.slice(firstOptionIndex) : [];
 
-        options = parseOptions(optionsLines);
-      }
+      questionText = questionLines
+        .join(' ')
+        .replace(/^(?:Q(?:uestion)?\.?\s*)?\d{1,3}\s*[\).:-]\s*/i, '')
+        .trim();
 
-      if (!questionText || questionText.length < 20) continue;
+      options = parseOptions(optionsLines);
+    }
 
-      const sectionHint = inferSectionHint(questionText, leadContext);
-      out.push({
-        text: questionText,
-        options,
-        sectionHint,
-        passageText: sectionHint === 'varc' && leadContext.length > 120 ? leadContext : null,
-        setText: sectionHint === 'dilr' && leadContext.length > 80 ? leadContext : null,
-      });
+    if (!questionText || questionText.length < 20) continue;
+
+    const sectionHint = inferSectionHint(questionText, leadContext);
+    const subtype = inferSubtype(sectionHint, questionText);
+    const extractionConfidence = computeExtractionConfidence({ questionText, options, questionNo, leadContext });
+
+    out.push({
+      text: questionText,
+      options,
+      questionNo,
+      subtype,
+      extractionConfidence,
+      rawBlock: block,
+      sectionHint,
+      passageText: sectionHint === 'varc' && leadContext.length > 120 ? leadContext : null,
+      setText: sectionHint === 'dilr' && leadContext.length > 80 ? leadContext : null,
+    });
   }
 
   return out;

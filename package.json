@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "review:pdf": "tsx scripts/reviewer.ts",
     "ingest:pdf": "tsx scripts/ingest.ts",
-    "ingest:dir": "tsx scripts/ingest.ts --dir"
+    "ingest:dir": "tsx scripts/ingest.ts --dir",
+    "check:golden-ingest": "tsx scripts/checkGoldenIngestion.ts",
+    "test:answer-parser": "tsx scripts/testAnswerKeyParser.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

@@ -6,6 +6,10 @@ export function Timer({ initialSeconds, onExpire }: { initialSeconds: number; on
   const [seconds, setSeconds] = useState(initialSeconds);
 
   useEffect(() => {
+    setSeconds(initialSeconds);
+  }, [initialSeconds]);
+
+  useEffect(() => {
     const id = setInterval(() => {
       setSeconds((s) => {
         if (s <= 1) {

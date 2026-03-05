@@ -9,7 +9,13 @@ export async function POST(req: Request) {
     if (!auth.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const score = await submitMock({ userId: auth.user.id, mockId: body.mockId, answers: body.answers ?? {} });
+    const score = await submitMock({
+      userId: auth.user.id,
+      mockId: body.mockId,
+      answers: body.answers ?? {},
+      questionTimings: body.questionTimings ?? {},
+      events: body.events ?? [],
+    });
     return NextResponse.json({ ok: true, score });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Submission failed' }, { status: 500 });

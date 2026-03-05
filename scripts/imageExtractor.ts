@@ -1,4 +1,5 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
@@ -84,13 +85,22 @@ async function getImageFromObj(page: { objs: { get: (name: string, cb: (obj: unk
 }
 
 export async function extractImagesFromPdf(filePath: string): Promise<ExtractedImage[]> {
+  const require = createRequire(import.meta.url);
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const OPS = (pdfjs as unknown as { OPS?: Record<string, number> }).OPS;
   const data = await readFile(filePath);
+  const pdfRoot = path.dirname(require.resolve('pdfjs-dist/package.json'));
+  const standardFontDataUrl = path.join(pdfRoot, 'standard_fonts/');
+  const wasmUrl = path.join(pdfRoot, 'wasm/');
 
   if (!OPS) return [];
 
-  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(data) });
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(data),
+    standardFontDataUrl,
+    wasmUrl,
+    useSystemFonts: true,
+  });
   const doc = await loadingTask.promise;
   const outputDir = await mkdtemp(path.join(tmpdir(), 'cat-dilr-images-'));
 

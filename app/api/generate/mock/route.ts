@@ -14,6 +14,9 @@ export async function POST(req: Request) {
       type: 'full',
       topic: body.topic,
       count: Number(body.count ?? 66),
+      blueprintId: body.blueprintId,
+      strictRealFirst: body.strictRealFirst ?? true,
+      allowGeneratedFill: body.allowGeneratedFill ?? true,
     });
     return NextResponse.json(result);
   } catch (error) {

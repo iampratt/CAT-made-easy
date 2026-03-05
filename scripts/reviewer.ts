@@ -2,17 +2,19 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { parseArgs } from 'node:util';
-import { parsePdfPages } from './pdfParser';
-import { splitQuantVarcQuestions } from './questionSplitter';
+import { runExtractionPipeline } from './extractionPipeline';
 import { tagInBatches, type IngestSourceType } from './tagger';
 
 interface SampleItem {
   page: number;
+  questionNo: number | null;
   text: string;
   options: string[];
   section: 'quant' | 'dilr' | 'varc';
   topic: string;
+  subtype: string;
   difficulty: 'easy' | 'medium' | 'hard';
+  extractionConfidence: number;
 }
 
 function shuffle<T>(arr: T[]) {
@@ -64,10 +66,17 @@ async function main() {
   const pageLimit = values.pages ? Number(values.pages) : 30;
   const nonInteractive = Boolean(values['non-interactive']);
 
-  const pages = await parsePdfPages(file);
-  const samplePages = pages.slice(0, Number.isFinite(pageLimit) ? pageLimit : 30);
+  const extraction = await runExtractionPipeline(file);
+  const samplePages = extraction.pages.slice(0, Number.isFinite(pageLimit) ? pageLimit : 30);
   const parsed = samplePages.flatMap((page) =>
-    splitQuantVarcQuestions(page.text).map((q) => ({ page: page.pageNumber, ...q })),
+    page.questions.map((q) => ({
+      page: page.pageNumber,
+      questionNo: q.questionNo,
+      extractionConfidence: q.extractionConfidence,
+      sectionHint: q.sectionHint,
+      text: q.text,
+      options: q.options,
+    })),
   );
 
   if (parsed.length === 0) {
@@ -79,15 +88,21 @@ async function main() {
 
   const taggedItems: SampleItem[] = taggedPool.map((item, idx) => ({
     page: item.page,
+    questionNo: item.questionNo,
+    extractionConfidence: item.extractionConfidence,
     text: item.text,
     options: item.options,
     section: tags[idx]?.section ?? item.sectionHint ?? 'quant',
     topic: tags[idx]?.topic ?? 'unclassified',
+    subtype: tags[idx]?.subtype ?? 'generic',
     difficulty: tags[idx]?.difficulty ?? 'medium',
   }));
 
   const sample = takePerSection(taggedItems, 20);
+  const avgConf = sample.reduce((acc, s) => acc + s.extractionConfidence, 0) / sample.length;
+
   console.log(`Review set size: ${sample.length} (target 60).`);
+  console.log(`Average extraction confidence in sample: ${avgConf.toFixed(2)}`);
 
   let flagged = 0;
   if (!nonInteractive) {
@@ -95,8 +110,8 @@ async function main() {
 
     for (let i = 0; i < sample.length; i += 1) {
       const item = sample[i];
-      console.log(`\n${i + 1}/${sample.length} [p${item.page}]`);
-      console.log(`Section=${item.section} | Topic=${item.topic} | Difficulty=${item.difficulty}`);
+      console.log(`\n${i + 1}/${sample.length} [p${item.page} q${item.questionNo ?? '-'}]`);
+      console.log(`Section=${item.section} | Topic=${item.topic} | Subtype=${item.subtype} | Difficulty=${item.difficulty} | Conf=${item.extractionConfidence.toFixed(2)}`);
       console.log(`Q: ${item.text.slice(0, 220)}`);
       console.log(`Options: ${item.options.join(' | ')}`);
 
@@ -113,8 +128,8 @@ async function main() {
   const flaggedPct = sample.length > 0 ? flagged / sample.length : 0;
   console.log(`\nFlagged: ${flagged}/${sample.length} (${(flaggedPct * 100).toFixed(1)}%)`);
 
-  if (flaggedPct > 0.1) {
-    console.error('Review failed: flagged percentage above 10%. Stop full ingestion and refine parsing/tagging first.');
+  if (flaggedPct > 0.1 || avgConf < 0.58) {
+    console.error('Review failed: flagged percentage above 10% or extraction confidence below threshold. Stop ingestion and refine parser first.');
     process.exit(1);
   }
 

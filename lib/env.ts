@@ -9,6 +9,10 @@ const schema = z.object({
   GROQ_FAST_MODEL: z.string().optional(),
   GROQ_VERIFY_MODEL: z.string().optional(),
   GROQ_VISION_MODEL: z.string().optional(),
+  LLAMA_CLOUD_API_KEY: z.string().optional(),
+  LLAMA_PARSE_MODE: z.enum(['fast', 'premium']).optional(),
+  MIN_ANSWER_CONFIDENCE: z.coerce.number().optional(),
+  MIN_EXTRACTION_CONFIDENCE: z.coerce.number().optional(),
   ADMIN_INGEST_SECRET: z.string().optional(),
 });
 
@@ -21,6 +25,10 @@ export const env = schema.parse({
   GROQ_FAST_MODEL: process.env.GROQ_FAST_MODEL,
   GROQ_VERIFY_MODEL: process.env.GROQ_VERIFY_MODEL,
   GROQ_VISION_MODEL: process.env.GROQ_VISION_MODEL,
+  LLAMA_CLOUD_API_KEY: process.env.LLAMA_CLOUD_API_KEY,
+  LLAMA_PARSE_MODE: process.env.LLAMA_PARSE_MODE,
+  MIN_ANSWER_CONFIDENCE: process.env.MIN_ANSWER_CONFIDENCE,
+  MIN_EXTRACTION_CONFIDENCE: process.env.MIN_EXTRACTION_CONFIDENCE,
   ADMIN_INGEST_SECRET: process.env.ADMIN_INGEST_SECRET,
 });
 

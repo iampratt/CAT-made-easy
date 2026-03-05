@@ -1,113 +1,95 @@
 # CAT Mock Generator (Next.js 16)
 
-Deploy-ready CAT preparation platform with personalized mock generation, PYQ full-text search, Supabase-backed persistence, and local ingestion scripts.
+CAT prep platform with a corpus-first mock engine, adaptive weak-area weighting, and a gated PDF ingestion pipeline.
+
+## Core Capabilities
+
+- Strict CAT-style full mock blueprint: `66` questions (`VARC 24`, `DILR 20`, `QA 22`)
+- Hybrid generation strategy:
+  - Uses verified corpus questions first
+  - Fills only shortfall slots with generated questions
+- Adaptive allocation by `section + topic + subtype + difficulty`
+- Ingestion reliability pipeline:
+  - deterministic extraction
+  - page confidence scoring
+  - optional external parser fallback (LlamaParse)
+  - strict quality gate before publish
+- Rich provenance on each question (`origin`, confidence, source page, ingestion run)
+- Exam runtime captures per-question timing and interaction events
 
 ## Stack
 
 - Next.js 16 (App Router)
 - TypeScript + ESLint
 - Supabase (Auth, Postgres, pgvector, Storage)
-- Groq (generation + verification model hooks)
+- Groq (tagging, solving, generation/verification)
 - LangChain.js
-- Recharts, react-markdown, remark-gfm
 
-## Features Implemented
+## Migrations
 
-- Auth pages for email/password login and signup
-- Route protection via Next.js `proxy.ts` for dashboard/mock/practice/PYQ
-- Session-aware navbar with login/signup state and logout action
-- Dashboard with score cards and trend chart
-- Mock config flow (`full`, `section`, `topic`)
-- Live exam UI with timer, question navigation, mark-for-review, progress save, submit
-- Results page
-- PYQ search UI + API route
-- Supabase SQL migration with:
-  - core tables
-  - vector + FTS indexes
-  - SQL functions (`get_questions_for_mock`, `match_questions_semantic`, `search_pyq`)
-  - starter RLS policies
-- Ingestion script scaffolds (`reviewer`, `ingest`, parser/splitter/embedder/upload/checkpoint modules)
+Run all migrations in order:
 
-## Project Structure
+- [0001_init.sql](/Users/pratt/Documents/Projects/CAT2/supabase/migrations/0001_init.sql)
+- [0002_allow_book_type.sql](/Users/pratt/Documents/Projects/CAT2/supabase/migrations/0002_allow_book_type.sql)
+- [0003_adaptive_rebuild.sql](/Users/pratt/Documents/Projects/CAT2/supabase/migrations/0003_adaptive_rebuild.sql)
 
-- `app/` routes, pages, API handlers
-- `components/` exam and dashboard UI
-- `lib/` env, Supabase clients, chains, personalization, scoring
-- `scripts/` local ingestion pipeline scripts (run via `pnpm`)
-- `supabase/migrations/0001_init.sql` database schema + functions
-- `types/` domain types
+## Environment
 
-## Local Setup
+Copy [`.env.example`](/Users/pratt/Documents/Projects/CAT2/.env.example) to `.env.local` and fill values.
 
-1. Install deps:
+Key variables:
 
-```bash
-pnpm install --store-dir /Users/pratt/Library/pnpm/store/v10
-```
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `GROQ_API_KEY`
+- `ADMIN_INGEST_SECRET`
+- Optional external parse fallback:
+  - `LLAMA_CLOUD_API_KEY`
+  - `LLAMA_PARSE_MODE=fast|premium`
 
-2. Create env file:
-
-```bash
-cp .env.example .env.local
-```
-
-3. Fill all required variables in `.env.local`.
-
-4. Start dev server:
+## Local Commands
 
 ```bash
 pnpm dev
-```
-
-5. Apply SQL migration in Supabase SQL editor:
-
-- Run contents of `supabase/migrations/0001_init.sql`
-- Run contents of `supabase/migrations/0002_allow_book_type.sql` (if DB was already initialized earlier)
-- Create a public storage bucket named `dilr-images`
-
-## Scripts
-
-```bash
-pnpm lint
 pnpm typecheck
-pnpm build
-pnpm review:pdf --file ./books/cat-2022.pdf --pages 30
-pnpm ingest:pdf --file ./books/cat-2022.pdf --section auto --source-type past_paper
-pnpm ingest:pdf --file ./books/arun-sharma-quant.pdf --section quant --source-type book
-pnpm ingest:dir ./books --section auto --source-type past_paper
-pnpm ingest:pdf --file ./books/cat-2022.pdf --dry-run --limit-pages 20
+pnpm lint
+
+# Review + ingest
+pnpm review:pdf --file "./books/CAT 2021-Slot-1- With Answer.pdf"
+pnpm ingest:pdf --file "./books/CAT 2021-Slot-1- With Answer.pdf" --section auto --source-type past_paper --strict-gate
+pnpm ingest:dir ./books --section auto --source-type past_paper --strict-gate
+
+# Validation scripts
+pnpm test:answer-parser
+pnpm check:golden-ingest
 ```
 
-Notes:
-- Use `--section auto` to infer section from filename (`varc`, `dilr/lrdi`, else `quant`).
-- Use `--source-type past_paper` for PYQs and `--source-type book` for Arun Sharma or other prep books.
-- Use `--dry-run` to test parsing without DB inserts.
-- Use reviewer before full ingest; if >10% flagged, fix parsing/tagging first.
-- For lowest ingestion cost: keep tagging on (8b), keep embeddings local, and use `--limit-pages` for trial runs before full ingestion.
-- Optional ingest flags: `--skip-tagging`, `--skip-embedding`, `--skip-vision` (use only for debugging).
+## New Admin Ingestion APIs
 
-## Deployment (Vercel)
+All require `x-admin-secret: <ADMIN_INGEST_SECRET>`.
 
-1. Push this repo to GitHub.
-2. Import project in Vercel.
-3. Set all environment variables from `.env.example`.
-4. Deploy.
+- `POST /api/ingest/run` -> create ingestion run
+- `GET /api/ingest/run/:id` -> run quality summary + issues
+- `POST /api/ingest/run/:id/approve` -> mark run as published if no blocking issues
 
-Recommended build command:
+## Mock Generation APIs
 
-```bash
-pnpm build
-```
+`POST /api/generate/mock` now accepts:
 
-## Important Notes
+- `blueprintId` (optional)
+- `strictRealFirst` (default `true`)
+- `allowGeneratedFill` (default `true`)
 
-- Ingestion is designed to run locally, not on Vercel.
-- Live query embedding is intentionally avoided in runtime APIs; retrieval is metadata + full-text based.
-- Generation endpoints run retrieval + Groq generation + verifier loop and persist generated questions into `questions`.
+Config persisted in `mocks.config` includes:
 
-## Next Hardening Steps
+- `blueprint`
+- `allocationPlan`
+- `generatedFillCount`
+- `durationSeconds`
 
-1. Add real user session binding in API routes so `userId` is inferred from authenticated session.
-2. Add integration tests for `/api/generate/*`, `/api/mock/*`, and `/api/search`.
-3. Tighten topic taxonomy mapping during ingestion for cleaner weak-area analytics.
-4. Add ingestion QA loop (`scripts/reviewer.ts`) with pass/fail gating.
+## Notes
+
+- Ingestion scripts are intended for local execution.
+- Runtime search uses full-text and metadata retrieval; embeddings remain optional support data.
+- Questions with low answer/extraction confidence are marked unverified and excluded from strict corpus selection.
