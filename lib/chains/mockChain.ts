@@ -47,32 +47,109 @@ function extractJsonBlock(content: string) {
   throw new Error('Model did not return JSON content.');
 }
 
+function extractBalancedJsonCandidates(input: string) {
+  const out: string[] = [];
+  const opens = new Set(['{', '[']);
+  const pair: Record<string, string> = { '{': '}', '[': ']' };
+
+  for (let i = 0; i < input.length; i += 1) {
+    const start = input[i];
+    if (!opens.has(start)) continue;
+
+    const stack: string[] = [start];
+    let inString = false;
+    let quote = '"';
+    let escaped = false;
+
+    for (let j = i + 1; j < input.length; j += 1) {
+      const ch = input[j];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch === quote) {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"' || ch === '\'') {
+        inString = true;
+        quote = ch;
+        continue;
+      }
+
+      if (ch === '{' || ch === '[') {
+        stack.push(ch);
+        continue;
+      }
+
+      if (ch === '}' || ch === ']') {
+        const top = stack[stack.length - 1];
+        if (!top || pair[top] !== ch) {
+          break;
+        }
+        stack.pop();
+        if (stack.length === 0) {
+          out.push(input.slice(i, j + 1));
+          break;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
 function sanitizeJsonCandidate(input: string) {
   return input
     .replace(/[\u201C\u201D]/g, '"')
     .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\bTrue\b/g, 'true')
+    .replace(/\bFalse\b/g, 'false')
+    .replace(/\bNone\b/g, 'null')
     .replace(/,\s*([}\]])/g, '$1')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
     .trim();
 }
 
 function parseLooseJson(raw: string): unknown {
-  const base = extractJsonBlock(raw);
-  const candidates: string[] = [base, sanitizeJsonCandidate(base)];
+  const candidates = new Set<string>();
+  const balancedFromRaw = extractBalancedJsonCandidates(raw);
+  for (const value of balancedFromRaw) candidates.add(value);
 
-  const questionsMatch = base.match(/"questions"\s*:\s*(\[[\s\S]*\])/);
-  if (questionsMatch?.[1]) {
-    candidates.push(questionsMatch[1], sanitizeJsonCandidate(questionsMatch[1]));
+  try {
+    const block = extractJsonBlock(raw);
+    candidates.add(block);
+  } catch {
+    // ignore and continue with balanced candidates
   }
 
-  const arrayStart = base.indexOf('[');
-  const arrayEnd = base.lastIndexOf(']');
-  if (arrayStart >= 0 && arrayEnd > arrayStart) {
-    const arr = base.slice(arrayStart, arrayEnd + 1);
-    candidates.push(arr, sanitizeJsonCandidate(arr));
+  const initial = Array.from(candidates);
+  for (const candidate of initial) {
+    candidates.add(sanitizeJsonCandidate(candidate));
+    const questionsMatch = candidate.match(/"questions"\s*:\s*(\[[\s\S]*\])/);
+    if (questionsMatch?.[1]) {
+      candidates.add(questionsMatch[1]);
+      candidates.add(sanitizeJsonCandidate(questionsMatch[1]));
+    }
+
+    const arrayStart = candidate.indexOf('[');
+    const arrayEnd = candidate.lastIndexOf(']');
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      const arr = candidate.slice(arrayStart, arrayEnd + 1);
+      candidates.add(arr);
+      candidates.add(sanitizeJsonCandidate(arr));
+    }
   }
 
-  for (const candidate of candidates) {
+  for (const candidate of Array.from(candidates)) {
     try {
       return JSON.parse(candidate);
     } catch {
@@ -128,14 +205,19 @@ function normalizeGeneratedQuestion(args: {
 }
 
 async function verifyQuestion(question: Question) {
-  const verifier = groqVerify();
-  const prompt = `Verify this CAT question and answer key.\nQuestion: ${question.text}\nOptions: ${question.options.join(' | ')}\nStated answer: ${question.correctAnswer}\nExplanation: ${question.explanation}\n\nReturn ONLY JSON: {"valid": true|false, "issue": "..."}`;
-  const response = await verifier.invoke(prompt);
-  const parsed = parseLooseJson(String(response.content ?? '')) as { valid?: boolean; issue?: string };
-  return {
-    valid: Boolean(parsed.valid),
-    issue: String(parsed.issue ?? ''),
-  };
+  try {
+    const verifier = groqVerify();
+    const prompt = `Verify this CAT question and answer key.\nQuestion: ${question.text}\nOptions: ${question.options.join(' | ')}\nStated answer: ${question.correctAnswer}\nExplanation: ${question.explanation}\n\nReturn ONLY JSON: {"valid": true|false, "issue": "..."}`;
+    const response = await verifier.invoke(prompt);
+    const parsed = parseLooseJson(String(response.content ?? '')) as { valid?: boolean; issue?: string };
+    return {
+      valid: Boolean(parsed.valid),
+      issue: String(parsed.issue ?? ''),
+    };
+  } catch {
+    // If verification output is malformed/unavailable, keep the generated question.
+    return { valid: true, issue: '' };
+  }
 }
 
 async function generateChunk(params: {
@@ -162,10 +244,17 @@ Return ONLY valid JSON:
 
   try {
     const response70b = await groq70b().invoke(prompt);
-    return parseGeneratedQuestions(String(response70b.content ?? ''));
+    const parsed70b = parseGeneratedQuestions(String(response70b.content ?? ''));
+    if (parsed70b.length > 0) return parsed70b;
   } catch {
-    const response8b = await groq8b().invoke(prompt);
+    // fall through to fast model
+  }
+
+  const response8b = await groq8b().invoke(prompt);
+  try {
     return parseGeneratedQuestions(String(response8b.content ?? ''));
+  } catch {
+    return [];
   }
 }
 

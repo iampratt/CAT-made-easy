@@ -8,6 +8,7 @@ const schema = z.object({
   GROQ_GENERATION_MODEL: z.string().optional(),
   GROQ_FAST_MODEL: z.string().optional(),
   GROQ_VERIFY_MODEL: z.string().optional(),
+  GROQ_VISION_MODEL: z.string().optional(),
   ADMIN_INGEST_SECRET: z.string().optional(),
 });
 
@@ -19,6 +20,7 @@ export const env = schema.parse({
   GROQ_GENERATION_MODEL: process.env.GROQ_GENERATION_MODEL,
   GROQ_FAST_MODEL: process.env.GROQ_FAST_MODEL,
   GROQ_VERIFY_MODEL: process.env.GROQ_VERIFY_MODEL,
+  GROQ_VISION_MODEL: process.env.GROQ_VISION_MODEL,
   ADMIN_INGEST_SECRET: process.env.ADMIN_INGEST_SECRET,
 });
 

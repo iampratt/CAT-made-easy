@@ -1,14 +1,17 @@
 #!/usr/bin/env tsx
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { getCheckpoint, upsertCheckpoint } from './checkpointer';
 import { embedBatch } from './embedder';
+import { extractImagesFromPdf, type ExtractedImage } from './imageExtractor';
 import { parsePdfPages } from './pdfParser';
 import { splitQuantVarcQuestions } from './questionSplitter';
 import { tagInBatches, type IngestSourceType } from './tagger';
+import { uploadDilrImage } from './uploader';
+import { describeDilrImage, transcribePageImage } from './visionTagger';
 
 type Section = 'quant' | 'dilr' | 'varc';
 
@@ -22,12 +25,24 @@ interface IngestOptions {
   limitPages?: number;
   skipTagging: boolean;
   skipEmbedding: boolean;
+  skipVision: boolean;
 }
 
 interface CandidateQuestion {
   text: string;
   options: string[];
   textHash: string;
+  pageNumber: number;
+  sectionHint?: Section;
+  passageText?: string | null;
+  setText?: string | null;
+}
+
+interface PageVisionMeta {
+  setText: string;
+  imageType: 'table' | 'bar_chart' | 'line_chart' | 'pie_chart' | 'venn' | 'network' | 'unknown';
+  shouldSkip: boolean;
+  imageUrl: string | null;
 }
 
 async function listPdfFiles(rootDir: string): Promise<string[]> {
@@ -52,7 +67,7 @@ async function listPdfFiles(rootDir: string): Promise<string[]> {
   return files.sort();
 }
 
-function dedupeByHash(items: Array<{ text: string; options: string[] }>): CandidateQuestion[] {
+function dedupeByHash(items: Array<Omit<CandidateQuestion, 'textHash'>>): CandidateQuestion[] {
   const seen = new Set<string>();
   const out: CandidateQuestion[] = [];
 
@@ -68,6 +83,10 @@ function dedupeByHash(items: Array<{ text: string; options: string[] }>): Candid
       text,
       options: item.options,
       textHash,
+      pageNumber: item.pageNumber,
+      sectionHint: item.sectionHint,
+      passageText: item.passageText,
+      setText: item.setText,
     });
   }
 
@@ -93,6 +112,46 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
   const pages = await parsePdfPages(filePath);
   const effectivePages = typeof opts.limitPages === 'number' ? pages.slice(0, opts.limitPages) : pages;
 
+  const extractedImages: ExtractedImage[] = opts.dryRun || opts.skipVision ? [] : await extractImagesFromPdf(filePath);
+  const imagesByPage = new Map<number, ExtractedImage[]>();
+  for (const image of extractedImages) {
+    const existing = imagesByPage.get(image.page) ?? [];
+    existing.push(image);
+    imagesByPage.set(image.page, existing);
+  }
+
+  const pageVisionCache = new Map<number, PageVisionMeta>();
+  const pageOcrCache = new Map<number, string>();
+  const pageSetId = new Map<number, string>();
+
+  async function getVisionMeta(pageNumber: number): Promise<PageVisionMeta | null> {
+    if (opts.dryRun || opts.skipVision) return null;
+    const cached = pageVisionCache.get(pageNumber);
+    if (cached) return cached;
+
+    const images = imagesByPage.get(pageNumber);
+    if (!images || images.length === 0) return null;
+
+    const primary = images[0];
+    const vision = await describeDilrImage(primary.imagePath);
+    let imageUrl: string | null = null;
+
+    if (!vision.shouldSkip) {
+      const remotePath = `ingest/${source}/page-${pageNumber}-${Date.now()}.png`;
+      imageUrl = await uploadDilrImage(primary.imagePath, remotePath);
+    }
+
+    const meta: PageVisionMeta = {
+      setText: vision.setText,
+      imageType: vision.imageType,
+      shouldSkip: vision.shouldSkip,
+      imageUrl,
+    };
+
+    pageVisionCache.set(pageNumber, meta);
+    return meta;
+  }
+
   await upsertCheckpoint(filePath, {
     status: 'running',
     total_pages: effectivePages.length,
@@ -103,7 +162,30 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
 
   for (let index = startPage; index < effectivePages.length; index += 1) {
     const page = effectivePages[index];
-    if (!page.text && page.hasImage) {
+    let parsed = splitQuantVarcQuestions(page.text);
+
+    if (parsed.length === 0 && page.hasImage && !opts.skipVision && !opts.dryRun) {
+      const pageImages = imagesByPage.get(page.pageNumber);
+      if (pageImages && pageImages.length > 0) {
+        let ocrText = pageOcrCache.get(page.pageNumber);
+        if (!ocrText) {
+          ocrText = await transcribePageImage(pageImages[0].imagePath);
+          pageOcrCache.set(page.pageNumber, ocrText);
+        }
+        parsed = splitQuantVarcQuestions(ocrText);
+      }
+    }
+
+    const candidates = dedupeByHash(parsed.map((q) => ({
+      text: q.text,
+      options: q.options,
+      pageNumber: page.pageNumber,
+      sectionHint: q.sectionHint,
+      passageText: q.passageText,
+      setText: q.setText,
+    })));
+
+    if (candidates.length === 0) {
       await upsertCheckpoint(filePath, {
         status: 'running',
         last_processed_page: index + 1,
@@ -111,9 +193,6 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
       });
       continue;
     }
-
-    const parsed = splitQuantVarcQuestions(page.text);
-    const candidates = dedupeByHash(parsed);
 
     const toInsert: CandidateQuestion[] = [];
     for (const candidate of candidates) {
@@ -145,32 +224,78 @@ async function ingestOneFile(filePath: string, opts: Omit<IngestOptions, 'file' 
       sinceLastCheckpoint += toInsert.length;
     } else {
       const tagged = opts.skipTagging
-        ? toInsert.map(() => ({ section: 'quant' as Section, topic: 'unclassified', difficulty: 'medium' as const, type: opts.sourceType, correct_answer: null, explanation: null }))
+        ? toInsert.map((q) => ({
+          section: q.sectionHint ?? 'quant',
+          topic: 'unclassified',
+          difficulty: 'medium' as const,
+          type: opts.sourceType,
+          correct_answer: null,
+          explanation: null,
+        }))
         : await tagInBatches(toInsert.map((q) => q.text), opts.sourceType, 10, 2000);
 
       const embeddings = opts.skipEmbedding
         ? toInsert.map(() => null)
         : await embedInBatches(toInsert.map((q) => q.text), 32);
 
-      const rows = toInsert.map((question, i) => ({
-        text: question.text,
-        options: question.options,
-        correct_answer: tagged[i]?.correct_answer ?? null,
-        explanation: tagged[i]?.explanation ?? null,
-        section: opts.section === 'auto' ? (tagged[i]?.section ?? 'quant') : opts.section,
-        topic: tagged[i]?.topic ?? 'unclassified',
-        difficulty: tagged[i]?.difficulty ?? 'medium',
-        source,
-        type: opts.sourceType,
-        embedding: embeddings[i] ?? null,
-        text_hash: question.textHash,
-      }));
+      const rows: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < toInsert.length; i += 1) {
+        const question = toInsert[i];
+        const taggedItem = tagged[i];
+        const section = opts.section === 'auto' ? (taggedItem?.section ?? question.sectionHint ?? 'quant') : opts.section;
 
-      const { error } = await supabase.from('questions').insert(rows);
-      if (error) throw error;
+        let setId: string | null = null;
+        let setText: string | null = section === 'dilr' ? (question.setText ?? null) : null;
+        let setImageUrl: string | null = null;
+        let setImageType: string | null = null;
 
-      inserted += rows.length;
-      sinceLastCheckpoint += rows.length;
+        if (section === 'dilr') {
+          const visionMeta = await getVisionMeta(question.pageNumber);
+          if (visionMeta?.shouldSkip) {
+            continue;
+          }
+
+          if (visionMeta) {
+            setText = visionMeta.setText || setText;
+            setImageUrl = visionMeta.imageUrl;
+            setImageType = visionMeta.imageType;
+          }
+
+          const existingSetId = pageSetId.get(question.pageNumber);
+          if (existingSetId) {
+            setId = existingSetId;
+          } else {
+            setId = randomUUID();
+            pageSetId.set(question.pageNumber, setId);
+          }
+        }
+
+        rows.push({
+          text: question.text,
+          options: question.options,
+          correct_answer: taggedItem?.correct_answer ?? null,
+          explanation: taggedItem?.explanation ?? null,
+          section,
+          topic: taggedItem?.topic ?? 'unclassified',
+          difficulty: taggedItem?.difficulty ?? 'medium',
+          source,
+          type: opts.sourceType,
+          set_id: setId,
+          set_text: setText,
+          set_image_url: setImageUrl,
+          set_image_type: setImageType,
+          passage_text: section === 'varc' ? (question.passageText ?? null) : null,
+          embedding: embeddings[i] ?? null,
+          text_hash: question.textHash,
+        });
+      }
+
+      if (rows.length > 0) {
+        const { error } = await supabase.from('questions').insert(rows);
+        if (error) throw error;
+        inserted += rows.length;
+        sinceLastCheckpoint += rows.length;
+      }
     }
 
     if (sinceLastCheckpoint >= 100 || (index + 1) % 5 === 0) {
@@ -204,6 +329,7 @@ function parseCli(): IngestOptions {
       'limit-pages': { type: 'string' },
       'skip-tagging': { type: 'boolean' },
       'skip-embedding': { type: 'boolean' },
+      'skip-vision': { type: 'boolean' },
     },
   });
 
@@ -232,6 +358,7 @@ function parseCli(): IngestOptions {
     limitPages,
     skipTagging: Boolean(values['skip-tagging']),
     skipEmbedding: Boolean(values['skip-embedding']),
+    skipVision: Boolean(values['skip-vision']),
   };
 }
 
@@ -256,6 +383,7 @@ async function main() {
       limitPages: opts.limitPages,
       skipTagging: opts.skipTagging,
       skipEmbedding: opts.skipEmbedding,
+      skipVision: opts.skipVision,
     });
 
     totalInserted += result.inserted;
